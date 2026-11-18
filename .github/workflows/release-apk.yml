@@ -1,0 +1,75 @@
+name: Build and Release VibeTube APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystores
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+          fi
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Build Debug & Release APKs and Release AAB
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          gradle :app:assembleDebug :app:assembleRelease :app:bundleRelease --no-daemon
+
+      - name: Rename release artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp app/build/outputs/apk/release/app-release.apk release-artifacts/VibeTube-v1.0.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/VibeTube-v1.0.0-debug.apk
+          cp app/build/outputs/bundle/release/app-release.aab release-artifacts/VibeTube-v1.0.0-release.aab
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.0-build.{0}', github.run_number) }}
+          name: VibeTube ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.0 (Build {0})', github.run_number) }}
+          body: |
+            Automated VibeTube Android build for `abdulhaseebnoonari742-max/VibeTube`.
+            - `VibeTube-v1.0.0-release.apk` — Installable Release APK
+            - `VibeTube-v1.0.0-debug.apk` — Installable Debug APK
+            - `VibeTube-v1.0.0-release.aab` — Google Play App Bundle
+          files: |
+            release-artifacts/VibeTube-v1.0.0-release.apk
+            release-artifacts/VibeTube-v1.0.0-debug.apk
+            release-artifacts/VibeTube-v1.0.0-release.aab
+          draft: false
+          prerelease: false
